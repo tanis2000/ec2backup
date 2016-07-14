@@ -17,12 +17,17 @@ var (
 	taggedOnly         = kingpin.Flag("tagged", "Backup only volumes tagged with the Backup=true tag").Short('t').Bool()
 	purge              = kingpin.Flag("purge", "Purge old backups").Short('p').Bool()
 	purgeAutomatedOnly = kingpin.Flag("purgeauto", "Purge automated backups only. Will ignore manual backups").Short('a').Bool()
+	dry                = kingpin.Flag("dryrun", "Simulates creation and deletion of snapshots.").Short('d').Bool()
 )
 
 func main() {
 	kingpin.Version("0.1.0")
 	kingpin.Parse()
-	fmt.Printf("%v, Region: %s\n", *verbose, *region)
+	fmt.Printf("Selected region: %s\n", *region)
+	fmt.Println("Current date and time: ", time.Now())
+	if *taggedOnly {
+		fmt.Println("Only volumes tagged with Backup=true will be backed up")
+	}
 	if *purge {
 		fmt.Println("Purging old backups with default policy (last 30 days and 1st day of each month and 1st day of each year)")
 		if *purgeAutomatedOnly {
@@ -31,6 +36,10 @@ func main() {
 	} else {
 		fmt.Println("Won't purge")
 	}
+	if *dry {
+		fmt.Println("Dry run. We will simulate creation and deletion commands")
+	}
+
 	svc := ec2.New(session.New(), &aws.Config{Region: aws.String(*region)})
 
 	resp, err := svc.DescribeInstances(nil)
@@ -81,18 +90,27 @@ func main() {
 						}
 					}
 					name := ""
+					backupTag := false
 					for _, vtag := range vres.Tags {
 						fmt.Println("        - Tag key: ", *vtag.Key, " - Value: ", *vtag.Value)
 						if *vtag.Key == "Name" {
 							name = *vtag.Value
 						}
+						if *vtag.Key == "Backup" {
+							backupString := *vtag.Value
+							if backupString == "true" {
+								backupTag = true
+							}
+						}
 					}
-					createRes, err := CreateSnapshot(svc, vres.VolumeId, &name)
-					if err != nil {
-						panic(err)
-					}
-					if createRes {
-						volumesSnapshottedCounter++
+					if !*taggedOnly || backupTag {
+						createRes, err := CreateSnapshot(svc, vres.VolumeId, &name)
+						if err != nil {
+							panic(err)
+						}
+						if createRes {
+							volumesSnapshottedCounter++
+						}
 					}
 				}
 			}
@@ -101,43 +119,22 @@ func main() {
 
 	fmt.Println(snapsDeletedCounter, " snapshots deleted.")
 	fmt.Println(volumesSnapshottedCounter, " volumes snapshots created.")
-	/*
-		desc := "vol-686fa3ad"
-		volumeID := "vol-686fa3ad"
-		dryRun := false
-
-		snapshot := &ec2.CreateSnapshotInput{Description: &desc, VolumeId: &volumeID, DryRun: &dryRun}
-		res, err := svc.CreateSnapshot(snapshot)
-		if err != nil {
-			panic(err)
-		}
-
-		fmt.Println("Created snapshot: ", *res.SnapshotId, " - Date of creation: ", *res.StartTime)
-		tagKey := "Name"
-		tagValue := "test"
-		tag := ec2.Tag{Key: &tagKey, Value: &tagValue}
-		tagKey = "CreatedBy"
-		tagValue = "AutomatedBackup"
-		createdTag := ec2.Tag{Key: &tagKey, Value: &tagValue}
-		createTag := &ec2.CreateTagsInput{Resources: []*string{res.SnapshotId}, Tags: []*ec2.Tag{&tag, &createdTag}}
-		tagRes, err := svc.CreateTags(createTag)
-		if err != nil {
-			panic(err)
-		}
-
-		_ = tagRes
-	*/
 }
 
 func DeleteSnapshot(svc *ec2.EC2, snapID *string) (bool, error) {
 	fmt.Println("Deleting snapshot ", *snapID)
-	/*
-		in := ec2.DeleteSnapshotInput{SnapshotId: snapID}
-		_, err := svc.DeleteSnapshot(&in)
-		if err != nil {
-			return false, err
-		}
-	*/
+
+	if *dry {
+		fmt.Println("!!!SIMULATION ONLY!!!")
+		return true, nil
+	}
+
+	in := ec2.DeleteSnapshotInput{SnapshotId: snapID}
+	_, err := svc.DeleteSnapshot(&in)
+	if err != nil {
+		return false, err
+	}
+
 	return true, nil
 }
 
@@ -190,25 +187,29 @@ func ShouldKeep(snapshot *ec2.Snapshot) (bool, error) {
 
 func CreateSnapshot(svc *ec2.EC2, volumeID *string, name *string) (bool, error) {
 	fmt.Println("Created snapshot of volume ", *volumeID)
-	/*
-		desc := volumeID
-		dryRun := false
 
-		snapshot := &ec2.CreateSnapshotInput{Description: desc, VolumeId: volumeID, DryRun: &dryRun}
-		res, err := svc.CreateSnapshot(snapshot)
-		if err != nil {
-			return false, err
-		}
+	if *dry {
+		fmt.Println("!!!SIMULATION ONLY!!!")
+		return true, nil
+	}
 
-		fmt.Println("Created snapshot: ", *res.SnapshotId, " - Date of creation: ", *res.StartTime)
-		tag := ec2.Tag{Key: aws.String("Name"), Value: name}
-		createdTag := ec2.Tag{Key: aws.String("CreatedBy"), Value: aws.String("AutomatedBackup")}
-		createTag := &ec2.CreateTagsInput{Resources: []*string{res.SnapshotId}, Tags: []*ec2.Tag{&tag, &createdTag}}
-		_, err = svc.CreateTags(createTag)
-		if err != nil {
-			return false, err
-		}
-	*/
+	desc := volumeID
+	dryRun := false
+
+	snapshot := &ec2.CreateSnapshotInput{Description: desc, VolumeId: volumeID, DryRun: &dryRun}
+	res, err := svc.CreateSnapshot(snapshot)
+	if err != nil {
+		return false, err
+	}
+
+	fmt.Println("Created snapshot: ", *res.SnapshotId, " - Date of creation: ", *res.StartTime)
+	tag := ec2.Tag{Key: aws.String("Name"), Value: name}
+	createdTag := ec2.Tag{Key: aws.String("CreatedBy"), Value: aws.String("AutomatedBackup")}
+	createTag := &ec2.CreateTagsInput{Resources: []*string{res.SnapshotId}, Tags: []*ec2.Tag{&tag, &createdTag}}
+	_, err = svc.CreateTags(createTag)
+	if err != nil {
+		return false, err
+	}
 
 	return true, nil
 }
