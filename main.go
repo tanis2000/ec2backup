@@ -23,7 +23,8 @@ var (
 func main() {
 	kingpin.Version("0.1.0")
 	kingpin.Parse()
-	fmt.Printf("%v, Region: %s\n", *verbose, *region)
+	fmt.Printf("Selected region: %s\n", *region)
+	fmt.Println("Current date and time: ", time.Now())
 	if *taggedOnly {
 		fmt.Println("Only volumes tagged with Backup=true will be backed up")
 	}
