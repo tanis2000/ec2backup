@@ -10,7 +10,13 @@ It supports a few options to help keeping backups under control.
 
 # Building
 
-Just clone this repository in your $GOPATH and run `go build`
+Just clone this repository in your $GOPATH and run the following lines:
+
+```
+go get gopkg.in/alecthomas/kingpin.v2
+go get github.com/aws/aws-sdk-go/aws
+go build
+```
 
 # Usage
 

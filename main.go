@@ -21,7 +21,7 @@ var (
 )
 
 func main() {
-	kingpin.Version("0.1.0")
+	kingpin.Version("0.1.1")
 	kingpin.Parse()
 	fmt.Printf("Selected region: %s\n", *region)
 	fmt.Println("Current date and time: ", time.Now())
