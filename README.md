@@ -30,6 +30,7 @@ Flags:
   -p, --purge      Purge old backups
   -a, --purgeauto  Purge automated backups only. Will ignore manual backups
   -d, --dryrun     Simulates creation and deletion of snapshots.
+  -b, --backup     Perform backup
       --version    Show application version.
 
 Args:
@@ -101,6 +102,17 @@ If you want to delete only those created by this application, you have to add th
 # Simulating
 
 The **-d** flag can be added to simulate the creation and deletion of snapshots. This is useful to check that you're actually passing the correct parameters and that everything is fine.
+
+# Changelog
+
+## 0.1.2
+
+- Added a 200ms delay between requests to AWS API to avoid being blocked by the rate limiter
+- Added the -b switch to run the backup so that we can just run a purge pass if needed
+
+## 0.1.1
+
+- First release
 
 # License
 

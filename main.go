@@ -7,6 +7,7 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 )
@@ -18,13 +19,20 @@ var (
 	purge              = kingpin.Flag("purge", "Purge old backups").Short('p').Bool()
 	purgeAutomatedOnly = kingpin.Flag("purgeauto", "Purge automated backups only. Will ignore manual backups").Short('a').Bool()
 	dry                = kingpin.Flag("dryrun", "Simulates creation and deletion of snapshots.").Short('d').Bool()
+	backup             = kingpin.Flag("backup", "Perform backup").Short('b').Bool()
+	sleepTime          = time.Duration(200) * time.Millisecond
 )
 
 func main() {
-	kingpin.Version("0.1.1")
+	kingpin.Version("0.1.2")
 	kingpin.Parse()
 	fmt.Printf("Selected region: %s\n", *region)
 	fmt.Println("Current date and time: ", time.Now())
+	if *backup {
+		fmt.Println("Will perform backups")
+	} else {
+		fmt.Println("Will NOT perform backups")
+	}
 	if *taggedOnly {
 		fmt.Println("Only volumes tagged with Backup=true will be backed up")
 	}
@@ -65,6 +73,7 @@ func main() {
 				if err != nil {
 					panic(err)
 				}
+				time.Sleep(sleepTime)
 				for _, vres := range volresp.Volumes {
 					if *purge {
 						snapshots, err := ListSnapshots(svc, vres.VolumeId, *purgeAutomatedOnly)
@@ -83,7 +92,21 @@ func main() {
 							if !keep {
 								_, err := DeleteSnapshot(svc, snap.SnapshotId)
 								if err != nil {
-									panic(err)
+									if awsErr, ok := err.(awserr.Error); ok {
+										if reqErr, ok := err.(awserr.RequestFailure); ok {
+											// A service error occurred
+											if reqErr.StatusCode() == 400 {
+												fmt.Println("Error:", awsErr.Code(), awsErr.Message())
+												fmt.Println("The snapshot is in use. Ignoring it.")
+											} else {
+												panic(err)
+											}
+										} else {
+											panic(err)
+										}
+									} else {
+										panic(err)
+									}
 								}
 								snapsDeletedCounter++
 							}
@@ -103,7 +126,7 @@ func main() {
 							}
 						}
 					}
-					if !*taggedOnly || backupTag {
+					if *backup && (!*taggedOnly || backupTag) {
 						createRes, err := CreateSnapshot(svc, vres.VolumeId, &name)
 						if err != nil {
 							panic(err)
@@ -130,6 +153,7 @@ func DeleteSnapshot(svc *ec2.EC2, snapID *string) (bool, error) {
 	}
 
 	in := ec2.DeleteSnapshotInput{SnapshotId: snapID}
+	time.Sleep(sleepTime)
 	_, err := svc.DeleteSnapshot(&in)
 	if err != nil {
 		return false, err
@@ -142,6 +166,7 @@ func ListSnapshots(svc *ec2.EC2, volumeID *string, automatedOnly bool) ([]*ec2.S
 	volFilter := ec2.Filter{Name: aws.String("volume-id"), Values: []*string{volumeID}}
 	filter := []*ec2.Filter{&volFilter}
 	in := ec2.DescribeSnapshotsInput{Filters: filter}
+	time.Sleep(sleepTime)
 	res, err := svc.DescribeSnapshots(&in)
 	if err != nil {
 		return nil, err
@@ -197,6 +222,7 @@ func CreateSnapshot(svc *ec2.EC2, volumeID *string, name *string) (bool, error) 
 	dryRun := false
 
 	snapshot := &ec2.CreateSnapshotInput{Description: desc, VolumeId: volumeID, DryRun: &dryRun}
+	time.Sleep(sleepTime)
 	res, err := svc.CreateSnapshot(snapshot)
 	if err != nil {
 		return false, err
@@ -206,6 +232,7 @@ func CreateSnapshot(svc *ec2.EC2, volumeID *string, name *string) (bool, error) 
 	tag := ec2.Tag{Key: aws.String("Name"), Value: name}
 	createdTag := ec2.Tag{Key: aws.String("CreatedBy"), Value: aws.String("AutomatedBackup")}
 	createTag := &ec2.CreateTagsInput{Resources: []*string{res.SnapshotId}, Tags: []*ec2.Tag{&tag, &createdTag}}
+	time.Sleep(sleepTime)
 	_, err = svc.CreateTags(createTag)
 	if err != nil {
 		return false, err
