@@ -20,11 +20,13 @@ var (
 	purgeAutomatedOnly = kingpin.Flag("purgeauto", "Purge automated backups only. Will ignore manual backups").Short('a').Bool()
 	dry                = kingpin.Flag("dryrun", "Simulates creation and deletion of snapshots.").Short('d').Bool()
 	backup             = kingpin.Flag("backup", "Perform backup").Short('b').Bool()
+	nonExistingVolumes = kingpin.Flag("nonexistingvolumes", "Purge snapshots of no longer existing volumes").Short('x').Bool()
+	notUsedVolumes     = kingpin.Flag("notusedvolumes", "Purge snapshots of volumes no longer attached to instances").Short('n').Bool()
 	sleepTime          = time.Duration(200) * time.Millisecond
 )
 
 func main() {
-	kingpin.Version("0.1.2")
+	kingpin.Version("0.2.0")
 	kingpin.Parse()
 	fmt.Printf("Selected region: %s\n", *region)
 	fmt.Println("Current date and time: ", time.Now())
@@ -42,7 +44,23 @@ func main() {
 			fmt.Println("Purging automated backups only")
 		}
 	} else {
-		fmt.Println("Won't purge")
+		fmt.Println("Won't purge attached volumes")
+	}
+	if *nonExistingVolumes {
+		fmt.Println("Purging old backups of no longer existing volumes with default policy (last 30 days and 1st day of each month and 1st day of each year)")
+		if *purgeAutomatedOnly {
+			fmt.Println("Purging automated backups only")
+		}
+	} else {
+		fmt.Println("Won't purge backups of no longer existing volumes")
+	}
+	if *notUsedVolumes {
+		fmt.Println("Purging old backups of no longer attached volumes with default policy (last 30 days and 1st day of each month and 1st day of each year)")
+		if *purgeAutomatedOnly {
+			fmt.Println("Purging automated backups only")
+		}
+	} else {
+		fmt.Println("Won't purge backups of no longer attached volumes")
 	}
 	if *dry {
 		fmt.Println("Dry run. We will simulate creation and deletion commands")
@@ -83,34 +101,11 @@ func main() {
 						if *purgeAutomatedOnly {
 							snapshots, err = AutomatedSnapshotsOnly(snapshots)
 						}
-						for _, snap := range snapshots {
-							fmt.Println("Checking snapshot ", *snap.SnapshotId, " with date ", *snap.StartTime)
-							keep, err := ShouldKeep(snap)
-							if err != nil {
-								panic(err)
-							}
-							if !keep {
-								_, err := DeleteSnapshot(svc, snap.SnapshotId)
-								if err != nil {
-									if awsErr, ok := err.(awserr.Error); ok {
-										if reqErr, ok := err.(awserr.RequestFailure); ok {
-											// A service error occurred
-											if reqErr.StatusCode() == 400 {
-												fmt.Println("Error:", awsErr.Code(), awsErr.Message())
-												fmt.Println("The snapshot is in use. Ignoring it.")
-											} else {
-												panic(err)
-											}
-										} else {
-											panic(err)
-										}
-									} else {
-										panic(err)
-									}
-								}
-								snapsDeletedCounter++
-							}
+						count, err := removeSnapshots(svc, snapshots)
+						if err != nil {
+							panic(err)
 						}
+						snapsDeletedCounter += count
 					}
 					name := ""
 					backupTag := false
@@ -138,6 +133,62 @@ func main() {
 				}
 			}
 		}
+	}
+
+	if *nonExistingVolumes {
+		fmt.Println("Purging snapshots of no longer existing volumes")
+		time.Sleep(sleepTime)
+		dvi := &ec2.DescribeVolumesInput{}
+		volresp, err := svc.DescribeVolumes(dvi)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("Total number of alive volumes: ", len(volresp.Volumes))
+
+		snapshots, err := listSnapshotsOfNoLongerExistingVolumes(svc, volresp.Volumes, *purgeAutomatedOnly)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("Total number of snapshots with no volumes: ", len(snapshots))
+
+		if *purgeAutomatedOnly {
+			snapshots, err = AutomatedSnapshotsOnly(snapshots)
+		}
+
+		count, err := removeSnapshots(svc, snapshots)
+		if err != nil {
+			panic(err)
+		}
+		snapsDeletedCounter += count
+	}
+
+	if *notUsedVolumes {
+		fmt.Println("Purging snapshots of volumes no longer attached to instances")
+		time.Sleep(sleepTime)
+		volFilter := ec2.Filter{Name: aws.String("status"), Values: []*string{aws.String("available")}}
+		filter := []*ec2.Filter{&volFilter}
+		dvi := &ec2.DescribeVolumesInput{Filters: filter}
+		volresp, err := svc.DescribeVolumes(dvi)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("Total number of available volumes: ", len(volresp.Volumes))
+
+		snapshots, err := listSnapshots(svc, volresp.Volumes, *purgeAutomatedOnly)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("Total number of snapshots of available volumes: ", len(snapshots))
+
+		if *purgeAutomatedOnly {
+			snapshots, err = AutomatedSnapshotsOnly(snapshots)
+		}
+
+		count, err := removeSnapshots(svc, snapshots)
+		if err != nil {
+			panic(err)
+		}
+		snapsDeletedCounter += count
 	}
 
 	fmt.Println(snapsDeletedCounter, " snapshots deleted.")
@@ -173,6 +224,48 @@ func ListSnapshots(svc *ec2.EC2, volumeID *string, automatedOnly bool) ([]*ec2.S
 	}
 
 	return res.Snapshots, nil
+}
+
+func listSnapshots(svc *ec2.EC2, volumes []*ec2.Volume, automatedOnly bool) ([]*ec2.Snapshot, error) {
+	var volumesList []*string
+	for _, volume := range volumes {
+		volumesList = append(volumesList, volume.VolumeId)
+	}
+	volFilter := ec2.Filter{Name: aws.String("volume-id"), Values: volumesList}
+	filter := []*ec2.Filter{&volFilter}
+	in := ec2.DescribeSnapshotsInput{Filters: filter}
+	time.Sleep(sleepTime)
+	res, err := svc.DescribeSnapshots(&in)
+	if err != nil {
+		return nil, err
+	}
+
+	return res.Snapshots, nil
+}
+
+func listSnapshotsOfNoLongerExistingVolumes(svc *ec2.EC2, volumes []*ec2.Volume, automatedOnly bool) ([]*ec2.Snapshot, error) {
+	in := ec2.DescribeSnapshotsInput{OwnerIds: []*string{aws.String("self")}}
+	time.Sleep(sleepTime)
+	res, err := svc.DescribeSnapshots(&in)
+	if err != nil {
+		return nil, err
+	}
+
+	var snaps []*ec2.Snapshot
+
+	for _, snapshot := range res.Snapshots {
+		found := false
+		for _, volume := range volumes {
+			if *snapshot.VolumeId == *volume.VolumeId {
+				found = true
+			}
+		}
+		if !found {
+			snaps = append(snaps, snapshot)
+		}
+	}
+
+	return snaps, nil
 }
 
 func AutomatedSnapshotsOnly(snapshots []*ec2.Snapshot) ([]*ec2.Snapshot, error) {
@@ -239,4 +332,37 @@ func CreateSnapshot(svc *ec2.EC2, volumeID *string, name *string) (bool, error) 
 	}
 
 	return true, nil
+}
+
+func removeSnapshots(svc *ec2.EC2, snapshots []*ec2.Snapshot) (int, error) {
+	snapsDeletedCounter := 0
+	for _, snap := range snapshots {
+		fmt.Println("Checking snapshot ", *snap.SnapshotId, " with date ", *snap.StartTime)
+		keep, err := ShouldKeep(snap)
+		if err != nil {
+			return snapsDeletedCounter, err
+		}
+		if !keep {
+			_, err := DeleteSnapshot(svc, snap.SnapshotId)
+			if err != nil {
+				if awsErr, ok := err.(awserr.Error); ok {
+					if reqErr, ok := err.(awserr.RequestFailure); ok {
+						// A service error occurred
+						if reqErr.StatusCode() == 400 {
+							fmt.Println("Error:", awsErr.Code(), awsErr.Message())
+							fmt.Println("The snapshot is in use. Ignoring it.")
+						} else {
+							return snapsDeletedCounter, err
+						}
+					} else {
+						return snapsDeletedCounter, err
+					}
+				} else {
+					return snapsDeletedCounter, err
+				}
+			}
+			snapsDeletedCounter++
+		}
+	}
+	return snapsDeletedCounter, nil
 }
