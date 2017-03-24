@@ -1,2 +1,2 @@
 ec2backup
-Copyright 2016 Valerio Santinelli. All Rights Reserved. 
+Copyright 2016-2017 Valerio Santinelli. All Rights Reserved. 

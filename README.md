@@ -24,14 +24,16 @@ go build
 usage: ec2backup [<flags>] <region>
 
 Flags:
-      --help       Show context-sensitive help (also try --help-long and --help-man).
-  -v, --verbose    Verbose mode.
-  -t, --tagged     Backup only volumes tagged with the Backup=true tag
-  -p, --purge      Purge old backups
-  -a, --purgeauto  Purge automated backups only. Will ignore manual backups
-  -d, --dryrun     Simulates creation and deletion of snapshots.
-  -b, --backup     Perform backup
-      --version    Show application version.
+      --help                Show context-sensitive help (also try --help-long and --help-man).
+  -v, --verbose             Verbose mode.
+  -t, --tagged              Backup only volumes tagged with the Backup=true tag
+  -p, --purge               Purge old backups
+  -a, --purgeauto           Purge automated backups only. Will ignore manual backups
+  -d, --dryrun              Simulates creation and deletion of snapshots.
+  -b, --backup              Perform backup
+  -x, --nonexistingvolumes  Purge snapshots of no longer existing volumes
+  -n, --notusedvolumes      Purge snapshots of volumes no longer attached to instances
+      --version             Show application version.
 
 Args:
   <region>  AWS region.
@@ -99,11 +101,29 @@ The old backups will be purged based on the default retention policy.
 Please note that all old snapshots will be checked, not just those created by this application.
 If you want to delete only those created by this application, you have to add the **-a** flag. This way it will only delete those snapshots that have the **CreatedBy** tag set to **AutomatedBackup** which is set by this applicaton when the new snapshots are created.
 
+# Purging backups of no longer existing volumes
+
+You can remove all the snapshots of volumes that no longer exist by adding the **-x** flag.
+The old backups will be purged based on the default retention policy.
+Please note that all old snapshots will be checked, not just those created by this application.
+If you want to delete only those created by this application, you have to add the **-a** flag. This way it will only delete those snapshots that have the **CreatedBy** tag set to **AutomatedBackup** which is set by this applicaton when the new snapshots are created.
+
+# Purging backups of volumes no longer attached
+
+You can remove all the snapshots of volumes that are no longer attached to instances by adding the **-n** flag.
+The old backups will be purged based on the default retention policy.
+Please note that all old snapshots will be checked, not just those created by this application.
+If you want to delete only those created by this application, you have to add the **-a** flag. This way it will only delete those snapshots that have the **CreatedBy** tag set to **AutomatedBackup** which is set by this applicaton when the new snapshots are created.
+
 # Simulating
 
 The **-d** flag can be added to simulate the creation and deletion of snapshots. This is useful to check that you're actually passing the correct parameters and that everything is fine.
 
 # Changelog
+
+## 0.2.0
+- Added the -x switch to remove backups of no longer existing volumes
+- Added the -n switch to remove backups of no volumes that are no longer attached to instances
 
 ## 0.1.2
 
