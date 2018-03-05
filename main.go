@@ -66,7 +66,11 @@ func main() {
 		fmt.Println("Dry run. We will simulate creation and deletion commands")
 	}
 
-	svc := ec2.New(session.New(), &aws.Config{Region: aws.String(*region)})
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+
+	svc := ec2.New(sess, &aws.Config{Region: aws.String(*region)})
 
 	resp, err := svc.DescribeInstances(nil)
 	if err != nil {
