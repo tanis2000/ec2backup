@@ -26,7 +26,7 @@ var (
 )
 
 func main() {
-	kingpin.Version("0.2.0")
+	kingpin.Version("0.2.1")
 	kingpin.Parse()
 	fmt.Printf("Selected region: %s\n", *region)
 	fmt.Println("Current date and time: ", time.Now())
@@ -66,7 +66,11 @@ func main() {
 		fmt.Println("Dry run. We will simulate creation and deletion commands")
 	}
 
-	svc := ec2.New(session.New(), &aws.Config{Region: aws.String(*region)})
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+
+	svc := ec2.New(sess, &aws.Config{Region: aws.String(*region)})
 
 	resp, err := svc.DescribeInstances(nil)
 	if err != nil {
