@@ -121,6 +121,9 @@ The **-d** flag can be added to simulate the creation and deletion of snapshots.
 
 # Changelog
 
+## 0.2.1
+- Added support for shared AWS credentials
+
 ## 0.2.0
 - Added the -x switch to remove backups of no longer existing volumes
 - Added the -n switch to remove backups of no volumes that are no longer attached to instances
